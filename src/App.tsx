@@ -782,7 +782,6 @@ export default function App() {
     { key: "feed",    icon: "Activity",   label: "Лента"    },
     { key: "report",  icon: "Plus",       label: "Сообщить" },
     { key: "history", icon: "Clock",      label: "История"  },
-    { key: "profile", icon: "User",       label: "Профиль"  },
     { key: "help",    icon: "HelpCircle", label: "Помощь"   },
   ];
 
