@@ -1,5 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import Icon from "@/components/ui/icon";
+
+// --- Yandex Maps global type ---
+declare global {
+  interface Window {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ymaps: any;
+  }
+}
 
 // --- Types ---
 type IncidentType = "dtp" | "fire" | "accident";
@@ -33,98 +41,158 @@ const TYPE_CONFIG = {
   accident: { label: "Авария",        color: "bg-blue-500",   light: "bg-blue-50 text-blue-700 border-blue-200",       icon: "Wrench", dot: "#3b82f6" },
 };
 
-// --- Map Component ---
-function MapView({ incidents, onSelect, selected }: {
+// --- Yandex Map Component ---
+function YandexMap({ incidents, onSelect, selected, onAddMarker }: {
   incidents: Incident[];
   onSelect: (i: Incident) => void;
   selected: Incident | null;
+  onAddMarker?: (lat: number, lng: number) => void;
 }) {
-  const [tooltip, setTooltip] = useState<Incident | null>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ymapRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const markersRef = useRef<any[]>([]);
+  const [mapReady, setMapReady] = useState(false);
+  const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
 
-  const lats = incidents.map(i => i.lat);
-  const lngs = incidents.map(i => i.lng);
-  const minLat = Math.min(...lats) - 0.01;
-  const maxLat = Math.max(...lats) + 0.01;
-  const minLng = Math.min(...lngs) - 0.01;
-  const maxLng = Math.max(...lngs) + 0.01;
+  // Инициализация карты
+  useEffect(() => {
+    const init = () => {
+      if (!mapRef.current || ymapRef.current) return;
+      window.ymaps.ready(() => {
+        const map = new window.ymaps.Map(mapRef.current, {
+          center: [55.751244, 37.618423],
+          zoom: 12,
+          controls: ["zoomControl", "geolocationControl"],
+        }, {
+          suppressMapOpenBlock: true,
+        });
 
-  const toX = (lng: number) => ((lng - minLng) / (maxLng - minLng)) * 540 + 30;
-  const toY = (lat: number) => ((maxLat - lat) / (maxLat - minLat)) * 340 + 30;
+        // Клик по карте — добавить метку
+        map.events.add("click", (e: { get: (key: string) => [number, number] }) => {
+          const coords = e.get("coords");
+          if (onAddMarker) onAddMarker(coords[0], coords[1]);
+        });
+
+        ymapRef.current = map;
+        setMapReady(true);
+
+        // Геолокация пользователя
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition((pos) => {
+            const loc: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+            setUserLocation(loc);
+            map.setCenter(loc, 13);
+
+            const userMark = new window.ymaps.Placemark(loc, {
+              hintContent: "Вы здесь",
+            }, {
+              preset: "islands#blueCircleDotIcon",
+            });
+            map.geoObjects.add(userMark);
+          });
+        }
+      });
+    };
+
+    if (window.ymaps) {
+      init();
+    } else {
+      const interval = setInterval(() => {
+        if (window.ymaps) { clearInterval(interval); init(); }
+      }, 300);
+      return () => clearInterval(interval);
+    }
+  }, []);
+
+  // Обновление маркеров инцидентов
+  useEffect(() => {
+    if (!ymapRef.current || !mapReady) return;
+
+    // Удаляем старые маркеры
+    markersRef.current.forEach(m => ymapRef.current.geoObjects.remove(m));
+    markersRef.current = [];
+
+    incidents.forEach((inc) => {
+      const cfg = TYPE_CONFIG[inc.type];
+      const isSelected = selected?.id === inc.id;
+
+      const placemark = new window.ymaps.Placemark(
+        [inc.lat, inc.lng],
+        {
+          balloonContentHeader: `<b>${inc.title}</b>`,
+          balloonContentBody: `<span style="color:#666;font-size:12px">${inc.address}</span><br/><span style="font-size:12px">${inc.description}</span>`,
+          balloonContentFooter: `<span style="color:#999;font-size:11px">${inc.time}</span>`,
+          hintContent: inc.title,
+        },
+        {
+          iconLayout: "default#image",
+          iconImageHref: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
+            <svg xmlns="http://www.w3.org/2000/svg" width="${isSelected ? 44 : 36}" height="${isSelected ? 44 : 36}" viewBox="0 0 44 44">
+              ${inc.status === "active" ? `<circle cx="22" cy="22" r="20" fill="${cfg.dot}" opacity="0.18"/>` : ""}
+              <circle cx="22" cy="22" r="${isSelected ? 14 : 11}" fill="${inc.status === "resolved" ? "#aaa" : cfg.dot}" stroke="white" stroke-width="3"/>
+            </svg>
+          `)}`,
+          iconImageSize: [isSelected ? 44 : 36, isSelected ? 44 : 36],
+          iconImageOffset: [isSelected ? -22 : -18, isSelected ? -22 : -18],
+        }
+      );
+
+      placemark.events.add("click", () => onSelect(inc));
+      ymapRef.current.geoObjects.add(placemark);
+      markersRef.current.push(placemark);
+    });
+  }, [incidents, mapReady, selected]);
+
+  // Центрировать на выбранном инциденте
+  useEffect(() => {
+    if (selected && ymapRef.current) {
+      ymapRef.current.setCenter([selected.lat, selected.lng], 14, { duration: 400 });
+    }
+  }, [selected]);
 
   return (
-    <div className="relative w-full h-full bg-[#f0ede8] overflow-hidden rounded-2xl">
-      <svg className="absolute inset-0 w-full h-full" viewBox="0 0 600 400" preserveAspectRatio="xMidYMid slice">
-        <rect width="600" height="400" fill="#f0ede8" />
-        <line x1="0" y1="200" x2="600" y2="200" stroke="#e2ddd8" strokeWidth="8" />
-        <line x1="300" y1="0" x2="300" y2="400" stroke="#e2ddd8" strokeWidth="8" />
-        <line x1="0" y1="100" x2="600" y2="150" stroke="#e8e4df" strokeWidth="4" />
-        <line x1="0" y1="300" x2="600" y2="280" stroke="#e8e4df" strokeWidth="4" />
-        <line x1="100" y1="0" x2="150" y2="400" stroke="#e8e4df" strokeWidth="4" />
-        <line x1="450" y1="0" x2="420" y2="400" stroke="#e8e4df" strokeWidth="4" />
-        {[...Array(12)].map((_, i) => (
-          <rect key={i} x={30 + (i % 4) * 140} y={20 + Math.floor(i / 4) * 120} width={100} height={80} rx="4"
-            fill={i % 3 === 0 ? "#e8f4f0" : i % 3 === 1 ? "#eef0e8" : "#f0ece8"} opacity="0.6" />
-        ))}
-        {incidents.map((inc) => {
-          const x = toX(inc.lng);
-          const y = toY(inc.lat);
-          const cfg = TYPE_CONFIG[inc.type];
-          const isSelected = selected?.id === inc.id;
-          return (
-            <g key={inc.id} onClick={() => onSelect(inc)}
-              onMouseEnter={() => setTooltip(inc)} onMouseLeave={() => setTooltip(null)}
-              style={{ cursor: "pointer" }}>
-              {inc.status === "active" && (
-                <circle cx={x} cy={y} r={isSelected ? 22 : 16} fill={cfg.dot} opacity="0.15">
-                  <animate attributeName="r" from={isSelected ? 18 : 12} to={isSelected ? 28 : 22} dur="1.8s" repeatCount="indefinite" />
-                  <animate attributeName="opacity" from="0.2" to="0" dur="1.8s" repeatCount="indefinite" />
-                </circle>
-              )}
-              <circle cx={x} cy={y} r={isSelected ? 14 : 10}
-                fill={inc.status === "resolved" ? "#aaa" : cfg.dot}
-                stroke="white" strokeWidth={isSelected ? 3 : 2}
-                style={{ filter: isSelected ? `drop-shadow(0 2px 8px ${cfg.dot}60)` : "none" }} />
-            </g>
-          );
-        })}
-      </svg>
+    <div className="relative w-full h-full rounded-2xl overflow-hidden">
+      <div ref={mapRef} className="w-full h-full" />
 
-      {tooltip && (
-        <div className="absolute top-4 left-4 right-4 pointer-events-none animate-scale-in">
-          <div className="bg-white/95 backdrop-blur-sm rounded-xl p-3 shadow-lg border border-border max-w-xs">
-            <div className="flex items-center gap-2">
-              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${TYPE_CONFIG[tooltip.type].light}`}>
-                {TYPE_CONFIG[tooltip.type].label}
-              </span>
-              <span className="text-xs text-muted-foreground">{tooltip.time}</span>
-            </div>
-            <p className="font-semibold text-sm mt-1">{tooltip.title}</p>
-            <p className="text-xs text-muted-foreground">{tooltip.address}</p>
+      {!mapReady && (
+        <div className="absolute inset-0 bg-[#f0ede8] flex items-center justify-center rounded-2xl">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-8 h-8 border-2 border-foreground/30 border-t-foreground rounded-full animate-spin" />
+            <span className="text-sm text-muted-foreground">Загрузка карты...</span>
           </div>
         </div>
       )}
 
-      <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-xl p-2.5 shadow border border-border">
-        <p className="text-[10px] text-muted-foreground font-medium mb-1.5 uppercase tracking-wider">Легенда</p>
-        {Object.entries(TYPE_CONFIG).map(([key, cfg]) => (
-          <div key={key} className="flex items-center gap-2 mb-1 last:mb-0">
-            <div className="w-2.5 h-2.5 rounded-full" style={{ background: cfg.dot }} />
-            <span className="text-xs">{cfg.label}</span>
-          </div>
-        ))}
-      </div>
+      {/* Легенда */}
+      {mapReady && (
+        <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-xl p-2.5 shadow border border-border pointer-events-none">
+          <p className="text-[10px] text-muted-foreground font-medium mb-1.5 uppercase tracking-wider">Легенда</p>
+          {Object.entries(TYPE_CONFIG).map(([key, cfg]) => (
+            <div key={key} className="flex items-center gap-2 mb-1 last:mb-0">
+              <div className="w-2.5 h-2.5 rounded-full" style={{ background: cfg.dot }} />
+              <span className="text-xs">{cfg.label}</span>
+            </div>
+          ))}
+          {userLocation && (
+            <div className="flex items-center gap-2 mt-1 pt-1 border-t border-border">
+              <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+              <span className="text-xs">Вы здесь</span>
+            </div>
+          )}
+        </div>
+      )}
 
-      <div className="absolute right-4 bottom-4 flex flex-col gap-1">
-        <button className="w-8 h-8 bg-white rounded-lg shadow border border-border flex items-center justify-center text-lg font-light hover:bg-secondary transition-colors">+</button>
-        <button className="w-8 h-8 bg-white rounded-lg shadow border border-border flex items-center justify-center text-lg font-light hover:bg-secondary transition-colors">−</button>
-      </div>
-
-      <div className="absolute top-4 right-4">
-        <button className="bg-white text-foreground text-xs font-semibold px-3 py-1.5 rounded-lg shadow border border-border flex items-center gap-1.5 hover:bg-secondary transition-colors">
-          <Icon name="Map" size={12} />
-          Яндекс.Карты
-        </button>
-      </div>
+      {/* Подсказка по клику */}
+      {mapReady && onAddMarker && (
+        <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg px-2.5 py-1.5 shadow border border-border pointer-events-none">
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <Icon name="MousePointer" size={11} />
+            Нажмите на карту, чтобы добавить инцидент
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -167,7 +235,35 @@ function IncidentCard({ incident, onClick, compact = false }: {
 function MapTab() {
   const [selected, setSelected] = useState<Incident | null>(null);
   const [filter, setFilter] = useState<IncidentType | "all">("all");
-  const filtered = filter === "all" ? INCIDENTS : INCIDENTS.filter(i => i.type === filter);
+  const [incidents, setIncidents] = useState<Incident[]>(INCIDENTS);
+  const [newMarker, setNewMarker] = useState<{ lat: number; lng: number } | null>(null);
+  const [newType, setNewType] = useState<IncidentType>("dtp");
+  const [newTitle, setNewTitle] = useState("");
+
+  const filtered = filter === "all" ? incidents : incidents.filter(i => i.type === filter);
+
+  const handleAddMarker = (lat: number, lng: number) => {
+    setNewMarker({ lat, lng });
+    setNewTitle("");
+  };
+
+  const handleSaveMarker = () => {
+    if (!newMarker || !newTitle.trim()) return;
+    const inc: Incident = {
+      id: Date.now(),
+      type: newType,
+      title: newTitle,
+      address: `${newMarker.lat.toFixed(5)}, ${newMarker.lng.toFixed(5)}`,
+      time: "только что",
+      description: "Добавлено пользователем",
+      lat: newMarker.lat,
+      lng: newMarker.lng,
+      status: "active",
+    };
+    setIncidents(prev => [inc, ...prev]);
+    setSelected(inc);
+    setNewMarker(null);
+  };
 
   return (
     <div className="flex flex-col h-full gap-3">
@@ -184,11 +280,52 @@ function MapTab() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0" style={{ minHeight: 260 }}>
-        <MapView incidents={filtered} onSelect={setSelected} selected={selected} />
+      <div className="flex-1 min-h-0" style={{ minHeight: 300 }}>
+        <YandexMap
+          incidents={filtered}
+          onSelect={setSelected}
+          selected={selected}
+          onAddMarker={handleAddMarker}
+        />
       </div>
 
-      {selected ? (
+      {/* Форма добавления нового маркера */}
+      {newMarker && (
+        <div className="animate-slide-up flex-shrink-0 bg-white rounded-xl border-2 border-foreground p-4">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-bold">Новый инцидент</p>
+            <button onClick={() => setNewMarker(null)} className="text-muted-foreground hover:text-foreground">
+              <Icon name="X" size={16} />
+            </button>
+          </div>
+          <div className="flex gap-2 mb-3">
+            {Object.entries(TYPE_CONFIG).map(([key, cfg]) => (
+              <button key={key} type="button" onClick={() => setNewType(key as IncidentType)}
+                className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${
+                  newType === key ? "border-foreground bg-white" : "border-border"
+                }`} style={{ color: newType === key ? cfg.dot : undefined }}>
+                {cfg.label}
+              </button>
+            ))}
+          </div>
+          <input value={newTitle} onChange={e => setNewTitle(e.target.value)}
+            placeholder="Название инцидента..."
+            className="w-full px-3 py-2 text-sm bg-secondary border border-border rounded-xl focus:outline-none focus:border-foreground mb-3" />
+          <div className="flex gap-2">
+            <button onClick={() => setNewMarker(null)}
+              className="flex-1 py-2 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:bg-secondary transition-colors">
+              Отмена
+            </button>
+            <button onClick={handleSaveMarker} disabled={!newTitle.trim()}
+              className="flex-1 py-2 rounded-xl bg-foreground text-background text-xs font-semibold hover:opacity-80 transition-opacity disabled:opacity-40">
+              Сохранить
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Выбранный / список */}
+      {!newMarker && (selected ? (
         <div className="animate-slide-up flex-shrink-0">
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Выбранный инцидент</p>
@@ -205,7 +342,7 @@ function MapTab() {
             ))}
           </div>
         </div>
-      )}
+      ))}
     </div>
   );
 }
