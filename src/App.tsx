@@ -241,25 +241,40 @@ function IncidentCard({ incident, onClick, compact = false }: {
 }
 
 // --- Shared incidents state hook ---
+const REFRESH_INTERVAL = 30_000;
+
 function useIncidents() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [countdown, setCountdown] = useState(REFRESH_INTERVAL / 1000);
 
-  const load = () => {
-    setLoading(true);
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
     apiGetIncidents()
-      .then(setIncidents)
+      .then(data => { setIncidents(data); setLastUpdated(new Date()); setCountdown(REFRESH_INTERVAL / 1000); })
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  // Автообновление каждые 30 сек
+  useEffect(() => {
+    load();
+    const interval = setInterval(() => load(true), REFRESH_INTERVAL);
+    return () => clearInterval(interval);
+  }, []);
 
-  return { incidents, setIncidents, loading, reload: load };
+  // Обратный отсчёт
+  useEffect(() => {
+    const tick = setInterval(() => setCountdown(c => c > 0 ? c - 1 : REFRESH_INTERVAL / 1000), 1000);
+    return () => clearInterval(tick);
+  }, []);
+
+  return { incidents, setIncidents, loading, reload: () => load(), lastUpdated, countdown };
 }
 
 // --- MAP TAB ---
 function MapTab() {
-  const { incidents, setIncidents, loading } = useIncidents();
+  const { incidents, setIncidents, loading, reload, countdown } = useIncidents();
   const [selected, setSelected] = useState<Incident | null>(null);
   const [filter, setFilter] = useState<IncidentType | "all">("all");
   const [newMarker, setNewMarker] = useState<{ lat: number; lng: number } | null>(null);
@@ -301,13 +316,22 @@ function MapTab() {
               filter === f.key ? "bg-foreground text-background border-foreground" : "bg-white text-muted-foreground border-border hover:border-foreground/30"
             }`}>{f.label}</button>
         ))}
-        <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
-          {loading ? (
-            <div className="w-3 h-3 border border-foreground/30 border-t-foreground rounded-full animate-spin" />
-          ) : (
+        <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+          <button onClick={reload}
+            className="flex items-center gap-1.5 bg-white border border-border px-2 py-1 rounded-lg hover:bg-secondary transition-colors">
+            {loading ? (
+              <div className="w-3 h-3 border border-foreground/30 border-t-foreground rounded-full animate-spin" />
+            ) : (
+              <Icon name="RefreshCw" size={11} className="text-muted-foreground" />
+            )}
+            <span className="text-[11px] text-muted-foreground font-medium">
+              {loading ? "Обновление..." : `${countdown}с`}
+            </span>
+          </button>
+          <div className="flex items-center gap-1">
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          )}
-          <span className="text-xs text-muted-foreground">{loading ? "Загрузка..." : "В эфире"}</span>
+            <span className="text-xs text-muted-foreground">В эфире</span>
+          </div>
         </div>
       </div>
 
