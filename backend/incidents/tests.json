@@ -1,0 +1,21 @@
+{
+  "tests": [
+    {
+      "name": "GET incidents list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": {"incidents": []},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "POST create incident",
+      "method": "POST",
+      "path": "/",
+      "body": {"type": "dtp", "title": "Тест ДТП", "address": "ул. Тестовая, 1", "description": "Тест", "lat": 55.75, "lng": 37.61},
+      "expectedStatus": 201,
+      "expectedBody": {"type": "dtp", "title": "Тест ДТП"},
+      "bodyMatcher": "partial"
+    }
+  ]
+}

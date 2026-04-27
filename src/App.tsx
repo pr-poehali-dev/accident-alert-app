@@ -26,14 +26,23 @@ interface Incident {
   status: "active" | "resolved";
 }
 
-// --- Mock Data ---
-const INCIDENTS: Incident[] = [
-  { id: 1, type: "dtp", title: "ДТП с пострадавшими", address: "ул. Ленина, 45", time: "5 мин назад", distance: "0.8 км", description: "Столкновение двух автомобилей. Пострадавших нет. Движение затруднено.", lat: 55.751244, lng: 37.618423, status: "active" },
-  { id: 2, type: "fire", title: "Пожар в здании", address: "пр. Мира, 12", time: "18 мин назад", distance: "2.1 км", description: "Возгорание на 3-м этаже жилого дома. Пожарные на месте.", lat: 55.764450, lng: 37.605700, status: "active" },
-  { id: 3, type: "accident", title: "Коммунальная авария", address: "ул. Садовая, 78", time: "32 мин назад", distance: "3.4 км", description: "Прорыв водопровода. Перекрыто движение на перекрёстке.", lat: 55.740900, lng: 37.630100, status: "active" },
-  { id: 4, type: "dtp", title: "ДТП (незначительное)", address: "Кутузовский пр., 4", time: "1 ч назад", distance: "4.7 км", description: "Небольшое столкновение, помощь не требуется.", lat: 55.745000, lng: 37.565000, status: "resolved" },
-  { id: 5, type: "fire", title: "Возгорание автомобиля", address: "ул. Тверская, 23", time: "2 ч назад", distance: "5.2 км", description: "Загорелся припаркованный автомобиль. МЧС прибыло.", lat: 55.770000, lng: 37.610000, status: "resolved" },
-];
+// --- API ---
+const API_URL = "https://functions.poehali.dev/7cda10f6-a7ce-42ba-ae88-c5e79c7bf955";
+
+async function apiGetIncidents(): Promise<Incident[]> {
+  const res = await fetch(API_URL);
+  const data = await res.json();
+  return data.incidents ?? [];
+}
+
+async function apiCreateIncident(payload: Omit<Incident, "id" | "time" | "distance">): Promise<Incident> {
+  const res = await fetch(API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
 
 const TYPE_CONFIG = {
   dtp:      { label: "ДТП",           color: "bg-red-500",    light: "bg-red-50 text-red-700 border-red-200",          icon: "Car",    dot: "#ef4444" },
@@ -231,14 +240,32 @@ function IncidentCard({ incident, onClick, compact = false }: {
   );
 }
 
+// --- Shared incidents state hook ---
+function useIncidents() {
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    setLoading(true);
+    apiGetIncidents()
+      .then(setIncidents)
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+
+  return { incidents, setIncidents, loading, reload: load };
+}
+
 // --- MAP TAB ---
 function MapTab() {
+  const { incidents, setIncidents, loading } = useIncidents();
   const [selected, setSelected] = useState<Incident | null>(null);
   const [filter, setFilter] = useState<IncidentType | "all">("all");
-  const [incidents, setIncidents] = useState<Incident[]>(INCIDENTS);
   const [newMarker, setNewMarker] = useState<{ lat: number; lng: number } | null>(null);
   const [newType, setNewType] = useState<IncidentType>("dtp");
   const [newTitle, setNewTitle] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const filtered = filter === "all" ? incidents : incidents.filter(i => i.type === filter);
 
@@ -247,22 +274,22 @@ function MapTab() {
     setNewTitle("");
   };
 
-  const handleSaveMarker = () => {
+  const handleSaveMarker = async () => {
     if (!newMarker || !newTitle.trim()) return;
-    const inc: Incident = {
-      id: Date.now(),
+    setSaving(true);
+    const inc = await apiCreateIncident({
       type: newType,
       title: newTitle,
       address: `${newMarker.lat.toFixed(5)}, ${newMarker.lng.toFixed(5)}`,
-      time: "только что",
       description: "Добавлено пользователем",
       lat: newMarker.lat,
       lng: newMarker.lng,
       status: "active",
-    };
+    });
     setIncidents(prev => [inc, ...prev]);
     setSelected(inc);
     setNewMarker(null);
+    setSaving(false);
   };
 
   return (
@@ -275,8 +302,12 @@ function MapTab() {
             }`}>{f.label}</button>
         ))}
         <div className="ml-auto flex items-center gap-1.5 flex-shrink-0">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span className="text-xs text-muted-foreground">В эфире</span>
+          {loading ? (
+            <div className="w-3 h-3 border border-foreground/30 border-t-foreground rounded-full animate-spin" />
+          ) : (
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          )}
+          <span className="text-xs text-muted-foreground">{loading ? "Загрузка..." : "В эфире"}</span>
         </div>
       </div>
 
@@ -316,9 +347,10 @@ function MapTab() {
               className="flex-1 py-2 rounded-xl border border-border text-xs font-semibold text-muted-foreground hover:bg-secondary transition-colors">
               Отмена
             </button>
-            <button onClick={handleSaveMarker} disabled={!newTitle.trim()}
-              className="flex-1 py-2 rounded-xl bg-foreground text-background text-xs font-semibold hover:opacity-80 transition-opacity disabled:opacity-40">
-              Сохранить
+            <button onClick={handleSaveMarker} disabled={!newTitle.trim() || saving}
+              className="flex-1 py-2 rounded-xl bg-foreground text-background text-xs font-semibold hover:opacity-80 transition-opacity disabled:opacity-40 flex items-center justify-center gap-1.5">
+              {saving && <div className="w-3 h-3 border border-background/40 border-t-background rounded-full animate-spin" />}
+              {saving ? "Сохранение..." : "Сохранить"}
             </button>
           </div>
         </div>
@@ -349,59 +381,69 @@ function MapTab() {
 
 // --- FEED TAB ---
 function FeedTab() {
+  const { incidents, loading } = useIncidents();
   const [activeType, setActiveType] = useState<IncidentType | "all">("all");
-  const filtered = activeType === "all" ? INCIDENTS : INCIDENTS.filter(i => i.type === activeType);
+  const filtered = activeType === "all" ? incidents : incidents.filter(i => i.type === activeType);
   const active = filtered.filter(i => i.status === "active");
   const resolved = filtered.filter(i => i.status === "resolved");
 
   return (
     <div className="flex flex-col gap-4 animate-fade-in">
-      <div className="grid grid-cols-3 gap-2">
-        {Object.entries(TYPE_CONFIG).map(([key, cfg]) => {
-          const count = INCIDENTS.filter(i => i.type === key && i.status === "active").length;
-          return (
-            <div key={key} className="bg-white rounded-xl p-3 border border-border text-center card-hover cursor-pointer"
-              onClick={() => setActiveType(key === activeType ? "all" : key as IncidentType)}>
-              <div className="text-2xl font-bold" style={{ color: cfg.dot }}>{count}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">{cfg.label}</div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="flex gap-2">
-        {[{ key: "all", label: "Все" }, ...Object.entries(TYPE_CONFIG).map(([k, v]) => ({ key: k, label: v.label }))].map(f => (
-          <button key={f.key} onClick={() => setActiveType(f.key as IncidentType | "all")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-              activeType === f.key ? "bg-foreground text-background border-foreground" : "bg-white text-muted-foreground border-border hover:border-foreground/30"
-            }`}>{f.label}</button>
-        ))}
-      </div>
-
-      {active.length > 0 && (
-        <section>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Активные</p>
-          <div className="flex flex-col gap-2">
-            {active.map((inc, i) => (
-              <div key={inc.id} className="animate-fade-in" style={{ animationDelay: `${i * 60}ms` }}>
-                <IncidentCard incident={inc} />
-              </div>
-            ))}
-          </div>
-        </section>
+      {loading && (
+        <div className="flex items-center justify-center py-8">
+          <div className="w-6 h-6 border-2 border-foreground/20 border-t-foreground rounded-full animate-spin" />
+        </div>
       )}
+      {!loading && (
+        <>
+          <div className="grid grid-cols-3 gap-2">
+            {Object.entries(TYPE_CONFIG).map(([key, cfg]) => {
+              const count = incidents.filter(i => i.type === key && i.status === "active").length;
+              return (
+                <div key={key} className="bg-white rounded-xl p-3 border border-border text-center card-hover cursor-pointer"
+                  onClick={() => setActiveType(key === activeType ? "all" : key as IncidentType)}>
+                  <div className="text-2xl font-bold" style={{ color: cfg.dot }}>{count}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{cfg.label}</div>
+                </div>
+              );
+            })}
+          </div>
 
-      {resolved.length > 0 && (
-        <section>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Завершённые</p>
-          <div className="flex flex-col gap-2 opacity-60">
-            {resolved.map((inc, i) => (
-              <div key={inc.id} className="animate-fade-in" style={{ animationDelay: `${i * 60}ms` }}>
-                <IncidentCard incident={inc} compact />
-              </div>
+          <div className="flex gap-2">
+            {[{ key: "all", label: "Все" }, ...Object.entries(TYPE_CONFIG).map(([k, v]) => ({ key: k, label: v.label }))].map(f => (
+              <button key={f.key} onClick={() => setActiveType(f.key as IncidentType | "all")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                  activeType === f.key ? "bg-foreground text-background border-foreground" : "bg-white text-muted-foreground border-border hover:border-foreground/30"
+                }`}>{f.label}</button>
             ))}
           </div>
-        </section>
+
+          {active.length > 0 && (
+            <section>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Активные</p>
+              <div className="flex flex-col gap-2">
+                {active.map((inc, i) => (
+                  <div key={inc.id} className="animate-fade-in" style={{ animationDelay: `${i * 60}ms` }}>
+                    <IncidentCard incident={inc} />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {resolved.length > 0 && (
+            <section>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Завершённые</p>
+              <div className="flex flex-col gap-2 opacity-60">
+                {resolved.map((inc, i) => (
+                  <div key={inc.id} className="animate-fade-in" style={{ animationDelay: `${i * 60}ms` }}>
+                    <IncidentCard incident={inc} compact />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
       )}
     </div>
   );
@@ -491,18 +533,27 @@ function ReportTab() {
 
 // --- HISTORY TAB ---
 function HistoryTab() {
-  const myReports = INCIDENTS.slice(0, 3);
-  const nearby = INCIDENTS.slice(1, 4);
+  const { incidents, loading } = useIncidents();
+  const active = incidents.filter(i => i.status === "active").slice(0, 5);
+  const resolved = incidents.filter(i => i.status === "resolved").slice(0, 5);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="w-6 h-6 border-2 border-foreground/20 border-t-foreground rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-5 animate-fade-in">
       <section>
         <div className="flex items-center justify-between mb-3">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Мои отчёты</p>
-          <span className="text-xs text-muted-foreground">{myReports.length} записей</span>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Активные события</p>
+          <span className="text-xs text-muted-foreground">{active.length} записей</span>
         </div>
         <div className="flex flex-col gap-2">
-          {myReports.map((inc, i) => (
+          {active.map((inc, i) => (
             <div key={inc.id} className="animate-fade-in" style={{ animationDelay: `${i * 50}ms` }}>
               <IncidentCard incident={inc} compact />
             </div>
@@ -512,11 +563,11 @@ function HistoryTab() {
 
       <section>
         <div className="flex items-center justify-between mb-3">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Рядом со мной</p>
-          <span className="text-xs text-muted-foreground">в радиусе 5 км</span>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Завершённые</p>
+          <span className="text-xs text-muted-foreground">{resolved.length} записей</span>
         </div>
-        <div className="flex flex-col gap-2">
-          {nearby.map((inc, i) => (
+        <div className="flex flex-col gap-2 opacity-70">
+          {resolved.map((inc, i) => (
             <div key={inc.id} className="animate-fade-in" style={{ animationDelay: `${i * 50}ms` }}>
               <IncidentCard incident={inc} compact />
             </div>
@@ -785,7 +836,8 @@ export default function App() {
     { key: "help",    icon: "HelpCircle", label: "Помощь"   },
   ];
 
-  const activeCount = INCIDENTS.filter(i => i.status === "active").length;
+  const { incidents: allIncidents } = useIncidents();
+  const activeCount = allIncidents.filter(i => i.status === "active").length;
 
   return (
     <div className="min-h-screen bg-background flex flex-col font-golos">
