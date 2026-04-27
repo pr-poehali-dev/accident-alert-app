@@ -872,7 +872,7 @@ export default function App() {
             <Icon name="AlertTriangle" size={16} className="text-background" />
           </div>
           <div>
-            <p className="text-sm font-bold leading-none">АвариОповест</p>
+            <p className="text-sm font-bold leading-none">Безопасный Артемовский</p>
             <p className="text-[10px] text-muted-foreground leading-none mt-0.5">Система экстренного оповещения</p>
           </div>
         </div>
