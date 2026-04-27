@@ -7,6 +7,7 @@ export default {
 		"./components/**/*.{ts,tsx}",
 		"./app/**/*.{ts,tsx}",
 		"./src/**/*.{ts,tsx}",
+			"./1777303609961270690.html"
 	],
 	prefix: "",
 	theme: {
@@ -17,8 +18,14 @@ export default {
 				'2xl': '1400px'
 			}
 		},
+		fontFamily: {
+			golos: ['Golos Text', 'sans-serif'],
+		},
 		extend: {
 			colors: {
+				danger: 'hsl(var(--danger))',
+				warning: 'hsl(var(--warning))',
+				info: 'hsl(var(--info))',
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
 				ring: 'hsl(var(--ring))',
@@ -88,7 +95,10 @@ export default {
 			},
 			animation: {
 				'accordion-down': 'accordion-down 0.2s ease-out',
-				'accordion-up': 'accordion-up 0.2s ease-out'
+				'accordion-up': 'accordion-up 0.2s ease-out',
+				'fade-in': 'fade-in 0.35s ease-out both',
+				'scale-in': 'scale-in 0.25s ease-out both',
+				'slide-up': 'slide-up 0.4s ease-out both',
 			}
 		}
 	},
