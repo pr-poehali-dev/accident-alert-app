@@ -807,7 +807,12 @@ export default function App() {
             <span className="text-[11px] font-semibold text-red-700">{activeCount} активных</span>
           </div>
           {isLoggedIn ? (
-            <div className="w-8 h-8 bg-foreground rounded-full flex items-center justify-center text-background text-sm font-bold cursor-pointer">И</div>
+            <button
+              onClick={() => setTab("profile")}
+              className="flex items-center gap-2 bg-foreground text-background pl-1 pr-3 py-1 rounded-full hover:opacity-80 transition-opacity animate-scale-in">
+              <div className="w-6 h-6 bg-white/20 rounded-full flex items-center justify-center text-xs font-bold">И</div>
+              <span className="text-xs font-semibold">Профиль</span>
+            </button>
           ) : (
             <button onClick={() => setShowAuth(true)}
               className="text-xs font-semibold bg-foreground text-background px-3 py-1.5 rounded-lg hover:opacity-80 transition-opacity">
